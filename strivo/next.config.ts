@@ -11,10 +11,6 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  // Disable server-side features since we're using localStorage
-  experimental: {
-    appDir: true,
-  },
   eslint: {
     // 构建时忽略ESLint错误
     ignoreDuringBuilds: true,

@@ -8,13 +8,14 @@ Your restaurant booking app is now ready for deployment to Netlify without any d
 - ✅ **Simplified Deployment**: No database configuration needed
 - ✅ **Works Offline**: Data stored locally in browser
 - ✅ **Easy Setup**: Just deploy and go!
+- ✅ **Static Export**: Fully static site with no server dependencies
 
 ## 🚀 Quick Deploy Steps
 
 ### 1. Push to Git
 ```bash
 git add .
-git commit -m "Ready for Netlify deployment - no database required"
+git commit -m "Ready for Netlify deployment - static export with localStorage"
 git push origin main
 ```
 
@@ -25,7 +26,7 @@ git push origin main
 2. Click "New site from Git"
 3. Choose your Git provider and select your repository
 4. Configure build settings:
-   - **Build command**: `npm run build`
+   - **Build command**: `npm install && npm run build`
    - **Publish directory**: `out`
    - **Node version**: `18`
 5. Click "Deploy site"
@@ -48,6 +49,7 @@ Your app will be live at `https://your-site-name.netlify.app`
 - **No Server Database**: No database setup or configuration required
 - **Per-Browser Data**: Data is not shared between different browsers/devices
 - **Admin Login**: Default credentials are `admin` / `admin123`
+- **Static Site**: No server-side functionality, everything runs in the browser
 
 ## 🔧 Optional Customization
 
@@ -62,6 +64,7 @@ If you want to customize the admin login, you can modify the credentials in:
 - ✅ Real-time availability checking
 - ✅ Responsive design
 - ✅ No database dependencies
+- ✅ Works completely offline
 
 ## 🆘 Support
 
@@ -69,5 +72,6 @@ If you encounter any issues:
 1. Check the Netlify build logs
 2. Ensure your repository is properly connected
 3. Verify the build settings are correct
+4. Make sure the `out` directory is being generated locally
 
 Your app is now much simpler to deploy and maintain! 🎉
