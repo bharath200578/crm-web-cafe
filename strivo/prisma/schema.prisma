@@ -1,0 +1,81 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  bookings  Booking[]
+}
+
+model Table {
+  id          String   @id @default(cuid())
+  number      Int
+  capacity    Int
+  location    String?  // e.g., "Window", "Corner", "Patio"
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  bookings    Booking[]
+}
+
+model Booking {
+  id          String      @id @default(cuid())
+  customerId  String
+  tableId     String
+  date        DateTime    // Date and time of booking
+  duration    Int         // Duration in minutes
+  partySize   Int         // Number of people
+  status      BookingStatus @default(PENDING)
+  specialRequests String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  customer    Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  table       Table       @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  
+  @@map("bookings")
+}
+
+model CafeSettings {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  address       String?
+  phone         String?
+  email         String?
+  openingHours  String?  // JSON string with opening hours
+  maxPartySize  Int      @default(10)
+  minPartySize  Int      @default(1)
+  bookingDuration Int    @default(120) // Default booking duration in minutes
+  timeSlots     String?  // JSON string with available time slots
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
