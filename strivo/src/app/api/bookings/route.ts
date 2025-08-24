@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { storage } from '@/lib/storage'
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,24 +26,18 @@ export async function POST(request: NextRequest) {
     const bookingDate = new Date(date)
     
     // Find or create customer
-    let customer = await db.customer.findUnique({
-      where: { email: customerEmail }
-    })
+    let customer = await storage.getCustomerByEmail(customerEmail)
 
     if (!customer) {
-      customer = await db.customer.create({
-        data: {
-          name: customerName,
-          email: customerEmail,
-          phone: customerPhone || null,
-        }
+      customer = await storage.createCustomer({
+        name: customerName,
+        email: customerEmail,
+        phone: customerPhone || null,
       })
     }
 
     // Check if the selected table is available
-    const selectedTable = await db.table.findUnique({
-      where: { id: tableId }
-    })
+    const selectedTable = await storage.getTableById(tableId)
 
     if (!selectedTable || !selectedTable.isActive) {
       return NextResponse.json(
@@ -62,35 +56,17 @@ export async function POST(request: NextRequest) {
     // Check for conflicting bookings for the selected table
     const bookingEndTime = new Date(bookingDate.getTime() + 2 * 60 * 60 * 1000) // 2 hours default duration
     
-    const conflictingBooking = await db.booking.findFirst({
-      where: {
-        tableId: tableId,
-        status: {
-          in: ['PENDING', 'CONFIRMED']
-        },
-        OR: [
-          {
-            AND: [
-              { date: { lte: bookingDate } },
-              { 
-                date: { 
-                  gte: new Date(bookingDate.getTime() - 2 * 60 * 60 * 1000) 
-                } 
-              }
-            ]
-          },
-          {
-            AND: [
-              { date: { lte: bookingEndTime } },
-              { 
-                date: { 
-                  gte: bookingDate 
-                } 
-              }
-            ]
-          }
-        ]
+    const allBookings = await storage.getBookings()
+    const conflictingBooking = allBookings.find(booking => {
+      if (booking.tableId !== tableId || !['PENDING', 'CONFIRMED'].includes(booking.status)) {
+        return false
       }
+      
+      const bookingStart = new Date(booking.date)
+      const bookingEnd = new Date(bookingStart.getTime() + booking.duration * 60 * 1000)
+      
+      // Check if the new booking overlaps with existing booking
+      return (bookingDate < bookingEnd && bookingEndTime > bookingStart)
     })
 
     if (conflictingBooking) {
@@ -101,20 +77,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Create the booking
-    const booking = await db.booking.create({
-      data: {
-        customerId: customer.id,
-        tableId: selectedTable.id,
-        date: bookingDate,
-        duration: 120, // 2 hours
-        partySize,
-        status: 'PENDING',
-        specialRequests: specialRequests || null,
-      },
-      include: {
-        customer: true,
-        table: true,
-      }
+    const booking = await storage.createBooking({
+      customerId: customer.id,
+      tableId: selectedTable.id,
+      date: bookingDate.toISOString(),
+      duration: 120, // 2 hours
+      partySize,
+      status: 'PENDING',
+      specialRequests: specialRequests || null,
     })
 
     return NextResponse.json({
@@ -123,8 +93,8 @@ export async function POST(request: NextRequest) {
       booking: {
         id: booking.id,
         date: booking.date,
-        tableNumber: booking.table.number,
-        customerName: booking.customer.name,
+        tableNumber: selectedTable.number,
+        customerName: customer.name,
         status: booking.status,
       }
     })
@@ -148,23 +118,24 @@ export async function GET(request: NextRequest) {
 
     if (startDate && endDate) {
       // Get bookings for a date range (used by table selection)
-      const bookings = await db.booking.findMany({
-        where: {
-          date: {
-            gte: new Date(startDate),
-            lte: new Date(endDate),
-          },
-        },
-        include: {
-          customer: true,
-          table: true,
-        },
-        orderBy: {
-          date: 'asc',
-        },
-      })
+      const bookings = await storage.getBookingsByDateRange(startDate, endDate)
+      
+      // Add customer and table information
+      const bookingsWithDetails = await Promise.all(
+        bookings.map(async (booking) => {
+          const customer = await storage.getCustomerById(booking.customerId)
+          const table = await storage.getTableById(booking.tableId)
+          return {
+            ...booking,
+            customer,
+            table
+          }
+        })
+      )
 
-      return NextResponse.json({ bookings })
+      return NextResponse.json({ 
+        bookings: bookingsWithDetails.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      })
     }
 
     if (date) {
@@ -172,41 +143,30 @@ export async function GET(request: NextRequest) {
       const startDate = new Date(date)
       const endDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000)
 
-      const bookings = await db.booking.findMany({
-        where: {
-          date: {
-            gte: startDate,
-            lt: endDate,
-          },
-        },
-        include: {
-          customer: true,
-          table: true,
-        },
-        orderBy: {
-          date: 'asc',
-        },
-      })
+      const bookings = await storage.getBookingsByDateRange(startDate.toISOString(), endDate.toISOString())
+      
+      // Add customer and table information
+      const bookingsWithDetails = await Promise.all(
+        bookings.map(async (booking) => {
+          const customer = await storage.getCustomerById(booking.customerId)
+          const table = await storage.getTableById(booking.tableId)
+          return {
+            ...booking,
+            customer,
+            table
+          }
+        })
+      )
 
-      return NextResponse.json({ bookings })
+      return NextResponse.json({ 
+        bookings: bookingsWithDetails.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      })
     }
 
     if (email) {
       // Get bookings for a specific customer
-      const customer = await db.customer.findUnique({
-        where: { email },
-        include: {
-          bookings: {
-            include: {
-              table: true,
-            },
-            orderBy: {
-              date: 'desc',
-            },
-          },
-        },
-      })
-
+      const customer = await storage.getCustomerByEmail(email)
+      
       if (!customer) {
         return NextResponse.json(
           { error: 'Customer not found' },
@@ -214,22 +174,50 @@ export async function GET(request: NextRequest) {
         )
       }
 
-      return NextResponse.json({ customer })
+      const bookings = await storage.getBookings()
+      const customerBookings = bookings.filter(b => b.customerId === customer.id)
+      
+      // Add table information
+      const bookingsWithTables = await Promise.all(
+        customerBookings.map(async (booking) => {
+          const table = await storage.getTableById(booking.tableId)
+          return {
+            ...booking,
+            table,
+            customer
+          }
+        })
+      )
+
+      return NextResponse.json({ 
+        customer: {
+          ...customer,
+          bookings: bookingsWithTables.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        }
+      })
     }
 
     // Get all bookings (for admin use)
-    const bookings = await db.booking.findMany({
-      include: {
-        customer: true,
-        table: true,
-      },
-      orderBy: {
-        date: 'desc',
-      },
-      take: 50, // Limit to last 50 bookings
-    })
+    const bookings = await storage.getBookings()
+    
+    // Add customer and table information
+    const bookingsWithDetails = await Promise.all(
+      bookings.map(async (booking) => {
+        const customer = await storage.getCustomerById(booking.customerId)
+        const table = await storage.getTableById(booking.tableId)
+        return {
+          ...booking,
+          customer,
+          table
+        }
+      })
+    )
 
-    return NextResponse.json({ bookings })
+    return NextResponse.json({ 
+      bookings: bookingsWithDetails
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, 50) // Limit to last 50 bookings
+    })
 
   } catch (error) {
     console.error('Booking retrieval error:', error)

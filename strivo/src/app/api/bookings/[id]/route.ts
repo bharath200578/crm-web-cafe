@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { storage } from '@/lib/storage'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const booking = await db.booking.findUnique({
-      where: { id: params.id },
-      include: {
-        customer: true,
-        table: true,
-      },
-    })
+    const booking = await storage.getBookingById(params.id)
 
     if (!booking) {
       return NextResponse.json(
@@ -21,7 +15,17 @@ export async function GET(
       )
     }
 
-    return NextResponse.json({ booking })
+    // Add customer and table information
+    const customer = await storage.getCustomerById(booking.customerId)
+    const table = await storage.getTableById(booking.tableId)
+
+    return NextResponse.json({ 
+      booking: {
+        ...booking,
+        customer,
+        table
+      }
+    })
   } catch (error) {
     console.error('Booking retrieval error:', error)
     return NextResponse.json(
@@ -37,37 +41,40 @@ export async function PUT(
 ) {
   try {
     const body = await request.json()
-    const { status, specialRequests, partySize, date } = body
+    const { status, specialRequests } = body
 
-    const existingBooking = await db.booking.findUnique({
-      where: { id: params.id },
-    })
+    const booking = await storage.getBookingById(params.id)
 
-    if (!existingBooking) {
+    if (!booking) {
       return NextResponse.json(
         { error: 'Booking not found' },
         { status: 404 }
       )
     }
 
-    const updateData: any = {}
-    if (status) updateData.status = status
-    if (specialRequests !== undefined) updateData.specialRequests = specialRequests
-    if (partySize) updateData.partySize = partySize
-    if (date) updateData.date = new Date(date)
-
-    const updatedBooking = await db.booking.update({
-      where: { id: params.id },
-      data: updateData,
-      include: {
-        customer: true,
-        table: true,
-      },
+    const updatedBooking = await storage.updateBooking(params.id, {
+      status: status || booking.status,
+      specialRequests: specialRequests !== undefined ? specialRequests : booking.specialRequests,
     })
+
+    if (!updatedBooking) {
+      return NextResponse.json(
+        { error: 'Failed to update booking' },
+        { status: 500 }
+      )
+    }
+
+    // Add customer and table information
+    const customer = await storage.getCustomerById(updatedBooking.customerId)
+    const table = await storage.getTableById(updatedBooking.tableId)
 
     return NextResponse.json({
       message: 'Booking updated successfully',
-      booking: updatedBooking,
+      booking: {
+        ...updatedBooking,
+        customer,
+        table
+      }
     })
   } catch (error) {
     console.error('Booking update error:', error)
@@ -83,23 +90,26 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const existingBooking = await db.booking.findUnique({
-      where: { id: params.id },
-    })
+    const booking = await storage.getBookingById(params.id)
 
-    if (!existingBooking) {
+    if (!booking) {
       return NextResponse.json(
         { error: 'Booking not found' },
         { status: 404 }
       )
     }
 
-    await db.booking.delete({
-      where: { id: params.id },
-    })
+    const deleted = await storage.deleteBooking(params.id)
+
+    if (!deleted) {
+      return NextResponse.json(
+        { error: 'Failed to delete booking' },
+        { status: 500 }
+      )
+    }
 
     return NextResponse.json({
-      message: 'Booking deleted successfully',
+      message: 'Booking deleted successfully'
     })
   } catch (error) {
     console.error('Booking deletion error:', error)

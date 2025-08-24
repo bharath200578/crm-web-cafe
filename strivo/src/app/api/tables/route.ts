@@ -1,20 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { storage } from '@/lib/storage'
 
 export async function GET(request: NextRequest) {
   try {
-    const tables = await db.table.findMany({
-      where: {
-        isActive: true
-      },
-      orderBy: {
-        number: 'asc'
-      }
-    })
-
+    const tables = await storage.getTables()
+    const activeTables = tables.filter(table => table.isActive)
+    
     return NextResponse.json({
-      tables,
-      total: tables.length
+      tables: activeTables.sort((a, b) => a.number - b.number),
+      total: activeTables.length
     })
   } catch (error) {
     console.error('Error fetching tables:', error)

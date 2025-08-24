@@ -1,44 +1,44 @@
 "use client"
 
-import { useState } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
-import { Calendar } from "@/components/ui/calendar"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { useToast } from "@/hooks/use-toast"
-import { TableSelection } from "@/components/table-selection"
-import { format } from "date-fns"
-import { CalendarDays, Clock, Users, MapPin, Phone, Mail, Table as TableIcon } from "lucide-react"
+import { useState } from 'react'
+import { Calendar } from '@/components/ui/calendar'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { useToast } from '@/hooks/use-toast'
+import { TableSelection } from '@/components/table-selection'
+import { clientStorage } from '@/lib/client-storage'
+import type { Table } from '@/lib/client-storage'
 
-interface Table {
+interface Booking {
   id: string
-  number: number
-  capacity: number
-  location: string
-  description: string
-  isActive: boolean
+  customerId: string
+  tableId: string
+  date: string
+  duration: number
+  partySize: number
+  status: string
+  specialRequests?: string
+  customer?: any
+  table?: Table
 }
 
 export default function Home() {
   const [date, setDate] = useState<Date>()
   const [time, setTime] = useState<string>()
-  const [partySize, setPartySize] = useState<number>(2)
+  const [partySize, setPartySize] = useState(2)
   const [selectedTable, setSelectedTable] = useState<Table | null>(null)
   const [customerName, setCustomerName] = useState("")
   const [customerEmail, setCustomerEmail] = useState("")
   const [customerPhone, setCustomerPhone] = useState("")
   const [specialRequests, setSpecialRequests] = useState("")
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [bookingSuccess, setBookingSuccess] = useState(false)
   const [bookingId, setBookingId] = useState("")
   const [currentStep, setCurrentStep] = useState(1)
-  
-  const { toast } = useToast()
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const timeSlots = [
     "09:00", "09:30", "10:00", "10:30", "11:00", "11:30",
@@ -47,6 +47,8 @@ export default function Home() {
     "18:00", "18:30", "19:00", "19:30", "20:00", "20:30",
     "21:00", "21:30"
   ]
+
+  const { toast } = useToast()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -68,28 +70,52 @@ export default function Home() {
       const [hours, minutes] = time.split(':')
       bookingDateTime.setHours(parseInt(hours), parseInt(minutes))
 
-      const response = await fetch('/api/bookings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          customerName,
-          customerEmail,
-          customerPhone,
-          date: bookingDateTime.toISOString(),
-          partySize,
-          tableId: selectedTable.id,
-          specialRequests,
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Booking failed')
+      // Find or create customer
+      let customer = await clientStorage.getCustomerByEmail(customerEmail)
+      
+      if (!customer) {
+        customer = await clientStorage.createCustomer({
+          name: customerName,
+          email: customerEmail,
+          phone: customerPhone || null,
+        })
       }
 
-      const data = await response.json()
-      setBookingId(data.bookingId)
+      // Check for conflicting bookings
+      const bookingEndTime = new Date(bookingDateTime.getTime() + 2 * 60 * 60 * 1000) // 2 hours
+      const allBookings = await clientStorage.getBookings()
+      const conflictingBooking = allBookings.find(booking => {
+        if (booking.tableId !== selectedTable.id || !['PENDING', 'CONFIRMED'].includes(booking.status)) {
+          return false
+        }
+        
+        const bookingStart = new Date(booking.date)
+        const bookingEnd = new Date(bookingStart.getTime() + booking.duration * 60 * 1000)
+        
+        return (bookingDateTime < bookingEnd && bookingEndTime > bookingStart)
+      })
+
+      if (conflictingBooking) {
+        toast({
+          title: "Booking Failed",
+          description: "Selected table is already booked for the requested time.",
+          variant: "destructive"
+        })
+        return
+      }
+
+      // Create the booking
+      const booking = await clientStorage.createBooking({
+        customerId: customer.id,
+        tableId: selectedTable.id,
+        date: bookingDateTime.toISOString(),
+        duration: 120, // 2 hours
+        partySize,
+        status: 'PENDING',
+        specialRequests: specialRequests || null,
+      })
+
+      setBookingId(booking.id)
       setBookingSuccess(true)
       
       toast({
@@ -124,33 +150,33 @@ export default function Home() {
   const nextStep = () => {
     if (currentStep === 1 && !date) {
       toast({
-        title: "Select Date",
-        description: "Please select a date first.",
+        title: "Please Select Date",
+        description: "Please select a date for your booking.",
         variant: "destructive"
       })
       return
     }
     if (currentStep === 2 && !time) {
       toast({
-        title: "Select Time",
-        description: "Please select a time first.",
+        title: "Please Select Time",
+        description: "Please select a time for your booking.",
         variant: "destructive"
       })
       return
     }
     if (currentStep === 3 && !selectedTable) {
       toast({
-        title: "Select Table",
-        description: "Please select a table first.",
+        title: "Please Select Table",
+        description: "Please select a table for your booking.",
         variant: "destructive"
       })
       return
     }
-    setCurrentStep(prev => Math.min(prev + 1, 4))
+    setCurrentStep(currentStep + 1)
   }
 
-  const prevStep = () => {
-    setCurrentStep(prev => Math.max(prev - 1, 1))
+  const previousStep = () => {
+    setCurrentStep(currentStep - 1)
   }
 
   if (bookingSuccess) {
@@ -158,57 +184,28 @@ export default function Home() {
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CalendarDays className="w-8 h-8 text-green-600" />
+            <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
             </div>
-            <CardTitle className="text-2xl text-green-700">Booking Confirmed!</CardTitle>
+            <CardTitle className="text-2xl text-green-600">Booking Confirmed!</CardTitle>
             <CardDescription>
-              Your table has been successfully reserved
+              Your table has been successfully reserved. We look forward to serving you!
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="bg-green-50 p-4 rounded-lg">
-              <p className="text-sm text-green-700 mb-2">Booking Reference:</p>
-              <p className="font-mono text-lg font-bold text-green-800">{bookingId}</p>
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h3 className="font-semibold mb-2">Booking Details:</h3>
+              <p><strong>Booking ID:</strong> {bookingId}</p>
+              <p><strong>Date:</strong> {date?.toLocaleDateString()}</p>
+              <p><strong>Time:</strong> {time}</p>
+              <p><strong>Table:</strong> {selectedTable?.number}</p>
+              <p><strong>Party Size:</strong> {partySize}</p>
             </div>
-            
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-2">
-                <CalendarDays className="w-4 h-4 text-gray-500" />
-                <span>{date && format(date, 'EEEE, MMMM d, yyyy')}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-gray-500" />
-                <span>{time}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <TableIcon className="w-4 h-4 text-gray-500" />
-                <span>Table {selectedTable?.number} ({selectedTable?.location})</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-gray-500" />
-                <span>{partySize} {partySize === 1 ? 'person' : 'people'}</span>
-              </div>
-            </div>
-
-            <div className="pt-4 space-y-2">
-              <Button onClick={resetForm} className="w-full">
-                Make Another Booking
-              </Button>
-              <Button 
-                variant="outline" 
-                className="w-full"
-                onClick={() => {
-                  navigator.clipboard.writeText(bookingId)
-                  toast({
-                    title: "Copied!",
-                    description: "Booking reference copied to clipboard",
-                  })
-                }}
-              >
-                Copy Reference
-              </Button>
-            </div>
+            <Button onClick={resetForm} className="w-full">
+              Make Another Booking
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -217,153 +214,84 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-50">
-      {/* Progress Steps */}
-      <div className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            {[1, 2, 3, 4].map((step) => (
-              <div key={step} className="flex items-center">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                  currentStep >= step ? 'bg-amber-600 text-white' : 'bg-gray-200 text-gray-600'
-                }`}>
-                  {step}
-                </div>
-                <div className="ml-2 text-sm font-medium">
-                  {step === 1 && 'Date'}
-                  {step === 2 && 'Time'}
-                  {step === 3 && 'Table'}
-                  {step === 4 && 'Details'}
-                </div>
-                {step < 4 && (
-                  <div className={`w-16 h-1 mx-4 ${currentStep > step ? 'bg-amber-600' : 'bg-gray-200'}`}></div>
-                )}
-              </div>
-            ))}
+      <div className="container mx-auto px-4 py-8">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-8">
+            <h1 className="text-4xl font-bold text-gray-900 mb-4">
+              Welcome to Cafe Delight
+            </h1>
+            <p className="text-xl text-gray-600">
+              Book your perfect table for an unforgettable dining experience
+            </p>
           </div>
-        </div>
-      </div>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid lg:grid-cols-3 gap-8">
-          {/* Booking Form */}
-          <div className="lg:col-span-2">
-            {currentStep === 1 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-2xl">Select Date</CardTitle>
-                  <CardDescription>
-                    Choose when you'd like to dine with us
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
+          <Card className="w-full">
+            <CardHeader>
+              <CardTitle className="text-2xl">Table Reservation</CardTitle>
+              <CardDescription>
+                Step {currentStep} of 4: {currentStep === 1 && "Select Date"}
+                {currentStep === 2 && "Select Time"}
+                {currentStep === 3 && "Select Table"}
+                {currentStep === 4 && "Customer Information"}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit} className="space-y-6">
+                {/* Step 1: Date Selection */}
+                {currentStep === 1 && (
                   <div className="space-y-4">
-                    <Calendar
-                      mode="single"
-                      selected={date}
-                      onSelect={setDate}
-                      disabled={(date) => date < new Date() || date > new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)}
-                      className="rounded-md border w-full"
-                    />
-                    <div className="flex justify-between">
-                      <Button variant="outline" disabled>
-                        Previous
-                      </Button>
-                      <Button onClick={nextStep} disabled={!date}>
-                        Next: Select Time
-                      </Button>
+                    <div>
+                      <Label htmlFor="date">Select Date</Label>
+                      <Calendar
+                        mode="single"
+                        selected={date}
+                        onSelect={setDate}
+                        disabled={(date) => date < new Date()}
+                        className="rounded-md border"
+                      />
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            )}
+                )}
 
-            {currentStep === 2 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-2xl">Select Time</CardTitle>
-                  <CardDescription>
-                    Choose your preferred dining time for {date && format(date, 'MMMM d, yyyy')}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
+                {/* Step 2: Time Selection */}
+                {currentStep === 2 && (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-4 gap-2">
-                      {timeSlots.map((slot) => (
-                        <Button
-                          key={slot}
-                          type="button"
-                          variant={time === slot ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setTime(slot)}
-                          className="text-sm"
-                        >
-                          {slot}
-                        </Button>
-                      ))}
-                    </div>
-                    <div className="flex justify-between">
-                      <Button variant="outline" onClick={prevStep}>
-                        Previous
-                      </Button>
-                      <Button onClick={nextStep} disabled={!time}>
-                        Next: Select Table
-                      </Button>
+                    <div>
+                      <Label htmlFor="time">Select Time</Label>
+                      <Select value={time} onValueChange={setTime}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choose a time" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {timeSlots.map((slot) => (
+                            <SelectItem key={slot} value={slot}>
+                              {slot}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            )}
+                )}
 
-            {currentStep === 3 && (
-              <TableSelection
-                selectedDate={date}
-                selectedTime={time}
-                partySize={partySize}
-                onTableSelect={setSelectedTable}
-                selectedTable={selectedTable}
-                onNext={nextStep}
-                onPrevious={prevStep}
-              />
-            )}
+                {/* Step 3: Table Selection */}
+                {currentStep === 3 && (
+                  <TableSelection
+                    selectedDate={date}
+                    selectedTime={time}
+                    partySize={partySize}
+                    onTableSelect={setSelectedTable}
+                    selectedTable={selectedTable}
+                    onNext={nextStep}
+                    onPrevious={previousStep}
+                  />
+                )}
 
-            {currentStep === 4 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-2xl">Guest Information</CardTitle>
-                  <CardDescription>
-                    Please provide your contact details to complete the booking
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleSubmit} className="space-y-6">
-                    {/* Booking Summary */}
-                    <Card className="bg-amber-50 border-amber-200">
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-lg">Booking Summary</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                          <div>
-                            <span className="font-medium">Date:</span> {date && format(date, 'MMMM d, yyyy')}
-                          </div>
-                          <div>
-                            <span className="font-medium">Time:</span> {time}
-                          </div>
-                          <div>
-                            <span className="font-medium">Table:</span> {selectedTable?.number} ({selectedTable?.location})
-                          </div>
-                          <div>
-                            <span className="font-medium">Guests:</span> {partySize}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    {/* Customer Information */}
-                    <div className="space-y-4">
-                      <h3 className="text-lg font-semibold">Contact Information</h3>
-                      <div className="space-y-2">
+                {/* Step 4: Customer Information */}
+                {currentStep === 4 && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
                         <Label htmlFor="name">Full Name *</Label>
                         <Input
                           id="name"
@@ -372,8 +300,8 @@ export default function Home() {
                           required
                         />
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="email">Email Address *</Label>
+                      <div>
+                        <Label htmlFor="email">Email *</Label>
                         <Input
                           id="email"
                           type="email"
@@ -382,128 +310,65 @@ export default function Home() {
                           required
                         />
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="phone">Phone Number</Label>
-                        <Input
-                          id="phone"
-                          type="tel"
-                          value={customerPhone}
-                          onChange={(e) => setCustomerPhone(e.target.value)}
-                        />
-                      </div>
                     </div>
-
-                    {/* Special Requests */}
-                    <div className="space-y-2">
-                      <Label htmlFor="requests">Special Requests</Label>
-                      <Textarea
-                        id="requests"
-                        placeholder="Any dietary restrictions, celebrations, or special requests..."
-                        value={specialRequests}
-                        onChange={(e) => setSpecialRequests(e.target.value)}
-                        rows={3}
+                    <div>
+                      <Label htmlFor="phone">Phone Number</Label>
+                      <Input
+                        id="phone"
+                        type="tel"
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
                       />
                     </div>
-
-                    <div className="flex justify-between">
-                      <Button type="button" variant="outline" onClick={prevStep}>
-                        Previous
-                      </Button>
-                      <Button 
-                        type="submit" 
-                        disabled={isSubmitting || !customerName || !customerEmail}
-                      >
-                        {isSubmitting ? "Reserving Table..." : "Confirm Booking"}
-                      </Button>
+                    <div>
+                      <Label htmlFor="partySize">Party Size</Label>
+                      <Select value={partySize.toString()} onValueChange={(value) => setPartySize(parseInt(value))}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[1, 2, 3, 4, 5, 6, 7, 8].map((size) => (
+                            <SelectItem key={size} value={size.toString()}>
+                              {size} {size === 1 ? 'person' : 'people'}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
-                  </form>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-
-          {/* Sidebar */}
-          <div className="space-y-6">
-            {/* Booking Progress */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Your Booking</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Date</span>
-                  <span className="font-medium">
-                    {date ? format(date, 'MMM d, yyyy') : 'Not selected'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Time</span>
-                  <span className="font-medium">
-                    {time || 'Not selected'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Guests</span>
-                  <span className="font-medium">{partySize} people</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Table</span>
-                  <span className="font-medium">
-                    {selectedTable ? `Table ${selectedTable.number}` : 'Not selected'}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Party Size */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Number of Guests</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Select value={partySize.toString()} onValueChange={(value) => setPartySize(parseInt(value))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((size) => (
-                      <SelectItem key={size} value={size.toString()}>
-                        {size} {size === 1 ? 'person' : 'people'}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </CardContent>
-            </Card>
-
-            {/* Cafe Info */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Welcome to Cafe Delight</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-sm text-gray-600">
-                  Experience culinary excellence in a warm, inviting atmosphere
-                </p>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-amber-600" />
-                    <span>9AM - 10PM Daily</span>
+                    <div>
+                      <Label htmlFor="specialRequests">Special Requests</Label>
+                      <Textarea
+                        id="specialRequests"
+                        value={specialRequests}
+                        onChange={(e) => setSpecialRequests(e.target.value)}
+                        placeholder="Any special requests or dietary requirements..."
+                      />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-amber-600" />
-                    <span>123 Main St</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Phone className="w-4 h-4 text-amber-600" />
-                    <span>(555) 123-4567</span>
-                  </div>
+                )}
+
+                {/* Navigation Buttons */}
+                <div className="flex justify-between pt-4">
+                  {currentStep > 1 && (
+                    <Button type="button" variant="outline" onClick={previousStep}>
+                      Previous
+                    </Button>
+                  )}
+                  {currentStep < 4 ? (
+                    <Button type="button" onClick={nextStep} className="ml-auto">
+                      Next
+                    </Button>
+                  ) : (
+                    <Button type="submit" disabled={isSubmitting} className="ml-auto">
+                      {isSubmitting ? "Confirming..." : "Confirm Booking"}
+                    </Button>
+                  )}
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+              </form>
+            </CardContent>
+          </Card>
         </div>
-      </main>
+      </div>
     </div>
   )
 }
